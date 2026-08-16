@@ -1,0 +1,244 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>FPL Multi-Model Bot — Aryaman</title>
+  <style>
+    * {
+      box-sizing: border-box;
+    }
+    body {
+      margin: 0;
+      min-height: 100vh;
+      background-color: #f7f6f2;
+      color: #000;
+      font-family: Arial, Helvetica, sans-serif;
+      font-size: 1.125rem;
+      line-height: 1.6;
+      padding: 2rem;
+      width: 100%;
+    }
+    .wrap {
+      max-width: 46rem;
+      margin: 0 auto;
+    }
+    h1 {
+      font-size: 1.6rem;
+      margin: 0 0 0.25rem;
+    }
+    h2 {
+      font-size: 1.25rem;
+      margin: 2.5rem 0 1rem;
+      border-top: 1px solid #ccc;
+      padding-top: 1.5rem;
+    }
+    .subtitle {
+      color: #555;
+      margin: 0 0 2rem;
+    }
+    p {
+      margin: 0 0 1.5rem;
+    }
+    ul, ol {
+      margin: 0 0 1.5rem;
+      padding-left: 1.4rem;
+    }
+    li {
+      margin-bottom: 0.5rem;
+    }
+    a {
+      color: #000;
+      text-decoration: underline;
+    }
+    a:hover {
+      text-decoration: none;
+    }
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      margin: 0 0 1.5rem;
+      font-size: 1rem;
+    }
+    th, td {
+      text-align: left;
+      padding: 0.5rem 0.75rem 0.5rem 0;
+      border-bottom: 1px solid #ddd;
+      vertical-align: top;
+    }
+    th {
+      color: #555;
+      font-weight: normal;
+      font-size: 0.9rem;
+      text-transform: uppercase;
+      letter-spacing: 0.03em;
+    }
+    code {
+      background: #eae8e1;
+      padding: 0.1rem 0.35rem;
+      border-radius: 3px;
+      font-size: 0.95rem;
+    }
+    pre {
+      background: #eae8e1;
+      padding: 1rem;
+      border-radius: 4px;
+      overflow-x: auto;
+      font-size: 0.95rem;
+      line-height: 1.5;
+    }
+    .note {
+      background: #eae8e1;
+      padding: 1rem 1.25rem;
+      border-radius: 4px;
+      margin: 0 0 1.5rem;
+    }
+    .back {
+      margin-top: 3rem;
+      padding-top: 1.5rem;
+      border-top: 1px solid #ccc;
+    }
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <h1>FPL Multi-Model Bot</h1>
+    <p class="subtitle">Four different ways to decide a Fantasy Premier League squad, run against each other, combined, and made fully inspectable.</p>
+
+    <p>
+      I wanted to see what happens when you point several genuinely different decision-making
+      approaches — a hand-tuned formula, a trained statistical model, an evolved strategy, and
+      an LLM reading the news — at the same problem, and let them compete rather than picking
+      one. This is that system: four models, each running its own live squad, combined by a
+      weighted ensemble, with a dashboard that shows the actual internals (training curves,
+      backtests, live weight sliders) rather than just a final recommendation.
+    </p>
+    <p>
+      <a href="https://github.com/aryamanvepa/fpl_model">Source code on GitHub</a>
+    </p>
+
+    <h2>The four models</h2>
+    <table>
+      <tr><th>Model</th><th>Approach</th><th>Measured result</th></tr>
+      <tr>
+        <td><strong>1 — Evolutionary</strong></td>
+        <td>A genetic algorithm. A population of transfer/captaincy strategies plays simulated
+          historical seasons; the best-scoring survive and breed the next generation — the same
+          idea as the classic "AI learns to play the Chrome dinosaur game" videos, applied to
+          squad selection instead.</td>
+        <td>Beat a sensible non-evolved baseline by <strong>+101 points</strong> over a full
+          held-out season it never trained on, while taking a third as many transfer hits.</td>
+      </tr>
+      <tr>
+        <td><strong>2 — Statistical</strong></td>
+        <td>Gradient-boosted trees, trained on 3 seasons of real gameweek data, predicting
+          expected points from features knowable before kickoff only (recent form, fixture
+          difficulty, home/away, price).</td>
+        <td><strong>MAE 1.02</strong> vs. 1.08 for a naive rolling-average baseline on a
+          held-out season — a real, modest, honestly-reported edge.</td>
+      </tr>
+      <tr>
+        <td><strong>3 — Basic stats</strong></td>
+        <td>A transparent, hand-weighted formula (points-per-game, value, ICT index, expected
+          goal involvement, expected goals conceded), weighted differently per position.</td>
+        <td>No ML — the fast-to-ship baseline the other models get measured against.</td>
+      </tr>
+      <tr>
+        <td><strong>4 — Qualitative</strong></td>
+        <td>An LLM (local Ollama or the Anthropic API) reads recent football headlines and
+          official injury/status notes for a shortlist of players, and reasons about score
+          adjustments with a rationale attached.</td>
+        <td>Single-pass synthesis rather than a multi-turn tool-using agent — deliberately
+          simple for a fixed daily source list.</td>
+      </tr>
+    </table>
+
+    <p>Every model's output — whatever form it takes internally — becomes a per-player score fed
+      into a shared integer linear program (via <code>PuLP</code>) that picks the actual
+      best legal 15-man squad: real budget, real 3-per-club cap, real formation rules. So every
+      model produces a genuinely valid squad, not just a ranking.</p>
+
+    <h2>Combining them</h2>
+    <p>
+      The four models score players in incompatible units — Model 2 outputs predicted points
+      (roughly 0–8), Model 1 a genome-weighted linear score (roughly −3 to 3), Models 3 and 4 a
+      0–1 composite. Averaging those directly would just let whichever model happens to use the
+      widest numeric range dominate for no principled reason.
+    </p>
+    <p>
+      Instead, each model's scores are converted to a <strong>percentile rank within that
+      model</strong> first (0 = that model's worst pick, 1 = its best), and only the ranks get
+      combined — weighted by what's actually been backtested. Models 1 and 2 (both measurably
+      beat a naive baseline) get the most weight; Model 3 (unvalidated hand-tuned formula) less;
+      Model 4 (no live backtest yet) least. If a model's backend is unavailable on a given run
+      (e.g. Ollama not running), it drops out and the remaining weights redistribute
+      automatically rather than the whole run failing.
+    </p>
+
+    <h2>Five live teams, one ruleset</h2>
+    <p>
+      Each model runs its own team, plus a fifth managed by the ensemble — five independent,
+      simultaneously-tracked squads so the models can be compared on live results, not just
+      backtests. All five follow the same mixed-autonomy rule: captain and bench-order changes
+      auto-apply (low-risk, easily corrected next week), while anything that changes squad
+      composition — the first-ever draft, or a transfer — queues for manual approval instead of
+      executing automatically.
+    </p>
+
+    <h2>Running weekly, on its own</h2>
+    <p>
+      A scheduled task checks daily whether the next gameweek deadline is within 60 hours, rather
+      than firing on a blind fixed weekly day — deadlines shift (postponements, double/blank
+      gameweeks, international breaks moving a deadline to Monday), so the check reads the real
+      deadline out of the data instead of assuming one. Once triggered, it refreshes data, runs
+      all four models plus the ensemble, diffs against each team's held squad, and queues
+      transfers — once per gameweek, tracked so a deadline that's "close" on both Thursday and
+      Friday doesn't trigger the run twice.
+    </p>
+
+    <h2>Making it inspectable</h2>
+    <p>
+      The part I cared about most: a dashboard that shows how each model actually thinks, not
+      just what it outputs.
+    </p>
+    <ul>
+      <li>Model 3's weights are live sliders — drag one and every ranking and chart recomputes immediately.</li>
+      <li>Model 1 has a slider across <em>generations</em> — scrub through training and see exactly what the
+        evolved strategy valued at that point, and what squad that generation's version of it would
+        draft for the current live gameweek.</li>
+      <li>Model 2 shows a predicted-vs-actual scatter on real held-out data, plus on-demand permutation
+        feature importance (shuffle a feature, measure how much worse predictions get).</li>
+      <li>The ensemble page shows, for any player, exactly which of the four models ranked them well
+        and by how much — not just the final blended number.</li>
+      <li>Every model page ends with that model's actual current squad, computed live from whatever's
+        on screen.</li>
+    </ul>
+
+    <h2>What's still rough</h2>
+    <p>Built to be honest about its own limitations, not just its results:</p>
+    <ul>
+      <li>Model 1's season simulator: at most one transfer evaluated per week, no bench autosubs, no
+        chips (wildcard, free hit, bench boost, triple captain) yet.</li>
+      <li>Model 4 has never had a live LLM backtest in the environment it was built in — the pipeline
+        is fully tested with a stubbed response, but real-world accuracy is unmeasured.</li>
+      <li>No real FPL account integration yet — the five teams' state is tracked locally, not against
+        actual FPL accounts.</li>
+    </ul>
+
+    <h2>Stack</h2>
+    <p>
+      Python throughout. <code>PuLP</code> for the ILP squad optimizer, <code>scikit-learn</code>
+      for the gradient-boosted predictor, a from-scratch genetic algorithm for the evolutionary
+      model, <code>Streamlit</code> + <code>Plotly</code> for the dashboard, SQLite for storage.
+      Data from the official FPL API and the public
+      <a href="https://github.com/vaastav/Fantasy-Premier-League">vaastav/Fantasy-Premier-League</a>
+      historical dataset.
+    </p>
+
+    <div class="back">
+      <p><a href="https://aryamanvepa.github.io/about_me/">← Back to aryaman.vepa</a> &nbsp;·&nbsp;
+      <a href="https://github.com/aryamanvepa/fpl_model">View source on GitHub</a></p>
+    </div>
+  </div>
+</body>
+</html>

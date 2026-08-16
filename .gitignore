@@ -1,0 +1,16 @@
+__pycache__/
+*.pyc
+*.pyo
+
+# Derived/regenerable artifacts -- rebuilt by the ingest/train scripts,
+# not worth tracking (the sqlite DB alone is ~12MB and pulled fresh from
+# the public FPL API + a public historical dataset)
+fpl_bot/data/*.sqlite
+fpl_bot/data/*.pkl
+fpl_bot/data/*.log
+
+# Local Claude Code permission grants -- not relevant to anyone else
+.claude/settings.local.json
+
+.DS_Store
+*.lnk
