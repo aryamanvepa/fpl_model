@@ -43,6 +43,7 @@ CREATE TABLE IF NOT EXISTS players (
     form REAL,
     selected_by_percent REAL,
     minutes INTEGER,
+    starts INTEGER,
     goals_scored INTEGER,
     assists INTEGER,
     clean_sheets INTEGER,

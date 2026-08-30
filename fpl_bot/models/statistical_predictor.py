@@ -230,7 +230,6 @@ def load_model_and_test_matrix():
 
 ELEMENT_TYPE_TO_POSITION = {1: "GK", 2: "DEF", 3: "MID", 4: "FWD"}
 LAST_COMPLETED_SEASON = "2025-26"
-LAST_SEASON_GAMES = 38
 
 
 def _full_season_team_rates(season: str) -> tuple[dict[str, tuple[float, float]], float, float]:
@@ -289,7 +288,7 @@ def build_live_feature_rows(pos_avg_points: dict, pos_avg_minutes: dict) -> tupl
         players = conn.execute(
             """
             SELECT id, web_name, team_id, element_type, now_cost, points_per_game,
-                   minutes, status, chance_of_playing_next_round
+                   minutes, starts, status, chance_of_playing_next_round
             FROM players
             """
         ).fetchall()
@@ -305,7 +304,7 @@ def build_live_feature_rows(pos_avg_points: dict, pos_avg_minutes: dict) -> tupl
     rows = []
     meta = []
     for (pid, web_name, team_id, element_type, now_cost, points_per_game,
-         minutes, status, chance_of_playing_next_round) in players:
+         minutes, starts, status, chance_of_playing_next_round) in players:
         if element_type not in ELEMENT_TYPE_TO_POSITION or team_id not in fixture_map:
             continue  # no GW1 fixture (e.g. blank gameweek) -- nothing to predict
 
@@ -318,7 +317,11 @@ def build_live_feature_rows(pos_avg_points: dict, pos_avg_minutes: dict) -> tupl
         opp_for, opp_against = team_rates.get(opp_name, (league_avg_for, league_avg_against))
 
         rolling_points_3 = points_per_game if points_per_game else pos_avg_points.get(position, 2.0)
-        rolling_minutes_3 = (minutes / LAST_SEASON_GAMES) if minutes else pos_avg_minutes.get(position, 45.0)
+        # minutes/starts self-adjusts whether "minutes" is last season's carried-over total
+        # (pre-season, starts also carried over) or this season's actual so-far totals --
+        # dividing by a hardcoded season length instead would silently misread a nailed-on
+        # starter as barely playing once games have actually been played this season
+        rolling_minutes_3 = (minutes / starts) if starts else pos_avg_minutes.get(position, 45.0)
 
         rows.append(
             {

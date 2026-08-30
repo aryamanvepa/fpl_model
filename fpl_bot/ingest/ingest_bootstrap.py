@@ -67,10 +67,10 @@ def ingest_players(conn, elements: list[dict]) -> None:
             id, web_name, first_name, second_name, team_id, element_type,
             now_cost, status, news, chance_of_playing_next_round,
             total_points, points_per_game, form, selected_by_percent,
-            minutes, goals_scored, assists, clean_sheets, goals_conceded,
+            minutes, starts, goals_scored, assists, clean_sheets, goals_conceded,
             bonus, bps, ict_index,
             expected_goals, expected_assists, expected_goal_involvements, expected_goals_conceded
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """,
         [
             (
@@ -79,7 +79,7 @@ def ingest_players(conn, elements: list[dict]) -> None:
                 e["now_cost"], e["status"], e["news"], e["chance_of_playing_next_round"],
                 e["total_points"], _to_float(e["points_per_game"]), _to_float(e["form"]),
                 _to_float(e["selected_by_percent"]),
-                e["minutes"], e["goals_scored"], e["assists"], e["clean_sheets"], e["goals_conceded"],
+                e["minutes"], e.get("starts", 0), e["goals_scored"], e["assists"], e["clean_sheets"], e["goals_conceded"],
                 e["bonus"], e["bps"], _to_float(e["ict_index"]),
                 _to_float(e["expected_goals"]), _to_float(e["expected_assists"]),
                 _to_float(e["expected_goal_involvements"]), _to_float(e["expected_goals_conceded"]),
