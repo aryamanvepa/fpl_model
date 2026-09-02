@@ -16,10 +16,29 @@ from fpl_bot.models.statistical_predictor import _availability_multiplier, build
 GENOME_PATH = Path(__file__).parent.parent.parent / "data" / "model1_genome.pkl"
 
 
+class StaleGenomeError(RuntimeError):
+    """The saved genome was evolved against a different feature set than the
+    code now uses -- scoring with it would either crash or, worse, silently
+    ignore whichever features it has no weight for."""
+
+
 def load_best_genome() -> Genome:
     with open(GENOME_PATH, "rb") as f:
         bundle = pickle.load(f)
-    return bundle["genome"]
+    genome = bundle["genome"]
+
+    saved_features = set(next(iter(genome.weights.values()), {}))
+    expected_features = set(FEATURES)
+    if saved_features != expected_features:
+        missing = sorted(expected_features - saved_features)
+        extra = sorted(saved_features - expected_features)
+        raise StaleGenomeError(
+            "The saved genome predates the current feature set and must be retrained "
+            "(`python -m fpl_bot.scripts.train_model1`, ~20-40 min). "
+            + (f"Missing weights for: {', '.join(missing)}. " if missing else "")
+            + (f"Has stale weights for: {', '.join(extra)}." if extra else "")
+        )
+    return genome
 
 
 def _normalize_rows(rows: list[dict]) -> list[dict]:

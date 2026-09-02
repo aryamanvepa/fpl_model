@@ -25,7 +25,11 @@ from fpl_bot import db
 from fpl_bot.ingest import ingest_bootstrap
 
 LOG_PATH = Path(__file__).parent.parent / "data" / "scheduler.log"
-DEADLINE_WINDOW_HOURS = 60  # trigger once the next deadline is within this many hours
+# Trigger once the next deadline is within this many hours. Checked on Mon/Wed:
+# Wed->Sat 11:00 deadline is ~65h out, Mon->Fri 18:30 is ~101h out -- 84h comfortably
+# catches the Wednesday-before-a-Saturday-deadline case without Monday ever firing
+# on a normal week (which is fine, Monday is just a safety net for early deadlines).
+DEADLINE_WINDOW_HOURS = 84
 
 
 def _setup_logging() -> logging.Logger:

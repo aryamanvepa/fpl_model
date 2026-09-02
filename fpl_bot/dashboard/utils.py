@@ -102,6 +102,7 @@ MODEL_LABELS = {
     "model3": "Model 3 -- Basic Stats",
     "model4": "Model 4 -- Qualitative",
     "ensemble": "Ensemble (Team E)",
+    "user_team": "My Team (from screenshot)",
 }
 POSITION_ORDER = ["GK", "DEF", "MID", "FWD"]
 

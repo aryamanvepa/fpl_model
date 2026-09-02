@@ -13,7 +13,7 @@ import streamlit as st
 
 from fpl_bot.dashboard.utils import explainer, go_grouped_bar, go_heatmap, page_header, render_squad_section
 from fpl_bot.models.evolutionary.genome import FEATURES, POSITIONS
-from fpl_bot.models.evolutionary.live_apply import predict_current_squad_scores
+from fpl_bot.models.evolutionary.live_apply import StaleGenomeError, predict_current_squad_scores
 from fpl_bot.scripts.train_model1 import MODEL_PATH
 
 st.set_page_config(page_title="Model 1 -- Evolutionary", page_icon="🧬", layout="wide")
@@ -125,4 +125,15 @@ st.info(
 
 st.divider()
 st.subheader(f"Final squad (using generation {gen_idx}'s genome, applied to the current live gameweek)")
-render_squad_section(predict_current_squad_scores(genome=inspected_genome), key_prefix="m1")
+try:
+    render_squad_section(predict_current_squad_scores(genome=inspected_genome), key_prefix="m1")
+except StaleGenomeError as e:
+    st.warning(str(e))
+except KeyError as e:
+    # a snapshot from an older generation can carry the old feature set even when
+    # the final saved genome is current -- same cause, different entry point
+    st.warning(
+        f"This generation's genome predates the current feature set (missing {e}), so it can't score "
+        "today's player pool. Retrain with `python -m fpl_bot.scripts.train_model1` to refresh all "
+        "generation snapshots."
+    )

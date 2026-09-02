@@ -26,11 +26,28 @@ class SquadResult:
     total_cost: int = 0
 
 
+# Deterministic tie-break. When many players share an identical score -- which
+# happens constantly, e.g. every player carries the same position-average
+# cold-start score in gameweek 1 -- the squad problem is degenerate: a huge
+# number of different squads are all exactly optimal, and CBC returns an
+# arbitrary one that varies between processes. In a season simulation that
+# arbitrary first pick then cascades through every subsequent week, producing
+# ~200-point swings in the final score on identical inputs and making any
+# model-vs-baseline comparison meaningless. Nudging each player's objective
+# coefficient by a minuscule, stable function of their id makes the optimum
+# unique and reproducible, while staying far below any real score difference.
+TIE_BREAK_EPSILON = 1e-9
+
+
+def _tie_broken(score: float, player_id: int) -> float:
+    return score + player_id * TIE_BREAK_EPSILON
+
+
 def pick_squad(players: list[PlayerScore], budget: int = BUDGET) -> list[PlayerScore]:
     prob = pulp.LpProblem("fpl_squad", pulp.LpMaximize)
     x = {p.player_id: pulp.LpVariable(f"x_{p.player_id}", cat="Binary") for p in players}
 
-    prob += pulp.lpSum(p.score * x[p.player_id] for p in players)
+    prob += pulp.lpSum(_tie_broken(p.score, p.player_id) * x[p.player_id] for p in players)
     prob += pulp.lpSum(p.now_cost * x[p.player_id] for p in players) <= budget
 
     for position, count in SQUAD_REQUIREMENTS.items():
@@ -51,7 +68,7 @@ def pick_starting_xi(squad: list[PlayerScore]) -> list[PlayerScore]:
     prob = pulp.LpProblem("fpl_starting_xi", pulp.LpMaximize)
     x = {p.player_id: pulp.LpVariable(f"s_{p.player_id}", cat="Binary") for p in squad}
 
-    prob += pulp.lpSum(p.score * x[p.player_id] for p in squad)
+    prob += pulp.lpSum(_tie_broken(p.score, p.player_id) * x[p.player_id] for p in squad)
     prob += pulp.lpSum(x[p.player_id] for p in squad) == 11
 
     for position, (lo, hi) in FORMATION_BOUNDS.items():

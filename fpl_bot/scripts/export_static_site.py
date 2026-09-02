@@ -65,6 +65,7 @@ NAV = [
     ("model1.html", "Model 1 – Evolutionary"),
     ("model4.html", "Model 4 – Qualitative"),
     ("ensemble.html", "Ensemble"),
+    ("fixtures.html", "Fixture Heatmap"),
     ("teams.html", "Teams & Squads"),
     ("approvals.html", "Approval Queue"),
 ]
@@ -454,6 +455,61 @@ def build_ensemble(all_scores: dict) -> list:
 
 # ---------------------------------------------------------------- Teams & Approvals
 
+def build_fixture_heatmap(model3_scores: list, horizon: int = 5) -> str:
+    from fpl_bot.features.fixtures import fixture_heatmap_grid, player_fixture_features
+    import plotly.graph_objects as go
+
+    team_names, gws, ease_matrix, label_matrix = fixture_heatmap_grid(horizon)
+    fig = go.Figure(
+        data=go.Heatmap(
+            z=ease_matrix,
+            x=[f"GW{g}" for g in gws],
+            y=team_names,
+            text=label_matrix,
+            texttemplate="%{text}",
+            textfont={"size": 10},
+            colorscale=[[0.0, "#d73027"], [0.5, "#fee08b"], [1.0, "#1a9850"]],
+            zmin=0, zmax=1,
+            colorbar={"title": "Ease"},
+        )
+    )
+    fig.update_layout(yaxis={"autorange": "reversed"})
+
+    from fpl_bot import db as _db
+
+    conn = _db.get_connection()
+    try:
+        teams = {r[0]: r[1] for r in conn.execute("SELECT id, short_name FROM teams")}
+    finally:
+        conn.close()
+
+    fixture_feats = player_fixture_features(horizon)
+    defenders = sorted([p for p in model3_scores if p.element_type in (1, 2)], key=lambda p: -p.score)[:20]
+    rows = "".join(
+        f"<tr><td>{p.web_name}</td><td>{teams.get(p.team_id, '?')}</td>"
+        f"<td>{'GKP' if p.element_type == 1 else 'DEF'}</td><td>£{p.now_cost/10:.1f}m</td>"
+        f"<td>{p.score:.3f}</td><td>{fixture_feats.get(p.player_id, {}).get('ease', 0):.2f}</td></tr>"
+        for p in defenders
+    )
+
+    body = (
+        '<div class="note">FPL rates every fixture 1-5 for difficulty. Here that is converted to an "ease" score -- '
+        "<strong>green = easy, red = hard</strong> -- so a horizontal band of green is a team with a good run. "
+        "Blank gameweeks show as a gap (no fixture means guaranteed zero points, which is worse than a hard "
+        "fixture, not neutral); double gameweeks count as two scoring chances. Sorted best run first.</div>"
+        + chart_html(fig, height=max(420, 26 * len(team_names)))
+        + f"<h2>Best defensive picks over the next {horizon} gameweeks</h2>"
+        + '<div class="note">Model 3 already weights fixtures most heavily for goalkeepers and defenders, whose '
+          "clean-sheet points depend far more on the opponent than attacking returns do.</div>"
+        + f"<table><tr><th>Player</th><th>Team</th><th>Pos</th><th>Price</th><th>Model 3 score</th><th>Fixture ease</th></tr>{rows}</table>"
+        + '<div class="note"><strong>Note on the word "heatmap":</strong> this is a fixture-difficulty heatmap (the '
+          "standard FPL fixture ticker). Player <em>positional</em> heatmaps -- where a player physically touches the "
+          "ball -- aren't available from the FPL API and would need a separate source such as Understat or FBref.</div>"
+    )
+    return page_shell("fixtures.html", "Fixture Heatmap",
+                       "Who has the easiest run coming up -- and which defenders that makes attractive.", body)
+
+
 def build_teams(all_scores_with_ensemble: dict) -> str:
     body = ""
     for key in ["model1", "model2", "model3", "model4", "ensemble"]:
@@ -510,6 +566,7 @@ def run() -> None:
         "model1.html": model1_html,
         "model4.html": model4_html,
         "ensemble.html": ensemble_html,
+        "fixtures.html": build_fixture_heatmap(model3_scores),
         "teams.html": build_teams(all_with_ensemble),
         "approvals.html": build_approvals(),
     }

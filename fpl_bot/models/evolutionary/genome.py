@@ -17,6 +17,11 @@ FEATURES = [
     "team_goals_against_rate",
     "opp_goals_for_rate",
     "opp_goals_against_rate",
+    # forward-looking fixture run -- lets the genome learn, per position, how
+    # much to trade current form against an easier set of upcoming opponents
+    "future_opp_goals_for_rate",
+    "future_opp_goals_against_rate",
+    "future_fixtures_count",
 ]
 
 

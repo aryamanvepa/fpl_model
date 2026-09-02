@@ -20,7 +20,12 @@ from fpl_bot.models.evolutionary.ga import evolve
 from fpl_bot.models.evolutionary.genome import FEATURES, POSITIONS, Genome
 from fpl_bot.models.evolutionary.simulator import simulate_season
 
-TRAIN_SEASONS = ["2023-24", "2024-25"]
+# Three-way split. The genome is *selected* on the validation season, never on
+# training fitness -- with 44 weights to tune, selecting on training score alone
+# reliably produces a genome that beats the baseline in-sample and loses to it
+# out-of-sample. The test season is touched exactly once, at the end.
+TRAIN_SEASONS = ["2023-24"]
+VALIDATION_SEASON = "2024-25"
 TEST_SEASON = "2025-26"
 MODEL_PATH = Path(__file__).parent.parent / "data" / "model1_genome.pkl"
 
@@ -37,8 +42,15 @@ def run(population_size: int = 30, generations: int = 20):
     if sys.stdout.encoding and sys.stdout.encoding.lower() != "utf-8":
         sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding="utf-8")
 
-    print(f"Evolving on {TRAIN_SEASONS} -- {population_size} genomes x {generations} generations")
-    result = evolve(TRAIN_SEASONS, population_size=population_size, generations=generations, seed=42)
+    print(f"Evolving on {TRAIN_SEASONS}, selecting on validation season {VALIDATION_SEASON} "
+          f"-- {population_size} genomes x {generations} generations")
+    result = evolve(
+        TRAIN_SEASONS,
+        validation_season=VALIDATION_SEASON,
+        population_size=population_size,
+        generations=generations,
+        seed=42,
+    )
     best = result["best_genome"]
 
     print()
@@ -63,6 +75,8 @@ def run(population_size: int = 30, generations: int = 20):
                 "genome": best,
                 "history": result["history"],
                 "genome_snapshots": result["genome_snapshots"],
+                "selected_generation": result["selected_generation"],
+                "validation_score": result["validation_score"],
                 "test_result": evolved_result,
                 "baseline_result": baseline_result,
             },

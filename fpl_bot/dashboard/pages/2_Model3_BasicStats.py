@@ -18,6 +18,7 @@ from fpl_bot.dashboard.utils import (
     page_header,
     render_squad_section,
 )
+from fpl_bot.features.fixtures import DEFAULT_HORIZON
 from fpl_bot.models.basic_stats import POSITION_WEIGHTS, compute_scores
 
 st.set_page_config(page_title="Model 3 -- Basic Stats", page_icon="🧮", layout="wide")
@@ -25,37 +26,54 @@ page_header("Model 3 -- Basic Stats", "A transparent, hand-tuned formula. No ML 
 
 explainer(
     """
-Every player's score is a weighted sum of 5 signals, computed separately per position (a "good defender"
+Every player's score is a weighted sum of 6 signals, computed separately per position (a "good defender"
 and "good striker" mean different things statistically):
 
-- **pts_rate** -- points per game last season (a rate, not a total, so it doesn't penalize players who missed games)
-- **value** -- last season's total points divided by current price (rewards cheap-but-productive players)
+- **Form (blended)** -- points per game, blending this season's actual results with the last 30 gameweeks
+  of last season. Early in a season the current sample is 2-3 matches of noise, so the blend leans on
+  history and shifts to current form as games accumulate (fully current by ~6 starts).
+- **value** -- total points divided by current price (rewards cheap-but-productive players)
 - **ict** -- FPL's own Influence/Creativity/Threat blended index
 - **attack** -- expected goal involvements (xG + xA): underlying attacking quality, not just actual goals
 - **defense** -- *negative* expected goals conceded: underlying defensive quality (only matters for GK/DEF)
+- **Fixtures** -- how easy the next N gameweeks look (FPL's own difficulty rating, adjusted for blank and
+  double gameweeks). Weighted highest for GK/DEF, whose clean-sheet points depend far more on the
+  opponent than attacking returns do. See the **Fixture Heatmap** page for the full grid.
 
 The whole thing is then multiplied by an availability factor: 0 if injured/suspended, scaled down if merely doubtful.
 """
 )
 
 POSITION_NAMES = {1: "GK", 2: "DEF", 3: "MID", 4: "FWD"}
-FEATURE_LABELS = {"pts_rate": "Points rate", "value": "Value (pts/£m)", "ict": "ICT index", "attack": "Attack (xGI)", "defense": "Defense (-xGC)"}
+FEATURE_LABELS = {
+    "pts_rate": "Form (blended)",
+    "value": "Value (pts/£m)",
+    "ict": "ICT index",
+    "attack": "Attack (xGI)",
+    "defense": "Defense (-xGC)",
+    "fixtures": "Fixtures (next N GWs)",
+}
+FEATURE_ORDER = ["pts_rate", "value", "ict", "attack", "defense", "fixtures"]
 
 st.subheader("Tune the formula yourself")
 st.caption("Drag any slider and every chart and ranking below recomputes live -- this is the whole formula, not a mockup.")
 
-if "m3_weights" not in st.session_state:
+# a preset saved before the fixtures signal existed would be missing that key
+if "m3_weights" not in st.session_state or "fixtures" not in next(iter(st.session_state.m3_weights.values()), {}):
     st.session_state.m3_weights = {pos: dict(feats) for pos, feats in POSITION_WEIGHTS.items()}
 
 if st.button("Reset to defaults"):
     st.session_state.m3_weights = {pos: dict(feats) for pos, feats in POSITION_WEIGHTS.items()}
     st.rerun()
 
+fixture_horizon = st.slider("Fixture look-ahead (gameweeks)", 1, 10, DEFAULT_HORIZON,
+                             help="How many upcoming gameweeks the Fixtures signal averages over.")
+
 cols = st.columns(4)
 for col, pos_id in zip(cols, [1, 2, 3, 4]):
     with col:
         st.markdown(f"**{POSITION_NAMES[pos_id]}**")
-        for feature in ["pts_rate", "value", "ict", "attack", "defense"]:
+        for feature in FEATURE_ORDER:
             st.session_state.m3_weights[pos_id][feature] = st.slider(
                 FEATURE_LABELS[feature], 0.0, 1.0, st.session_state.m3_weights[pos_id][feature], 0.05,
                 key=f"m3_{pos_id}_{feature}",
@@ -98,7 +116,7 @@ future scoring rate, which is a legitimate (if unsurprising) thing to weight hea
 
 st.divider()
 st.subheader("What it currently ranks highest (with your weights)")
-scores = compute_scores(weights_override=current_weights)
+scores = compute_scores(weights_override=current_weights, fixture_horizon=fixture_horizon)
 scores_df = pd.DataFrame([{"Name": p.web_name, "Position": POSITION_NAMES[p.element_type], "Price": p.now_cost / 10, "Score": p.score} for p in scores])
 
 POS_COLORS = {"GK": "#E69F00", "DEF": "#0072B2", "MID": "#009E73", "FWD": "#CC79A7"}

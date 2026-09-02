@@ -30,8 +30,17 @@ FEATURE_COLUMNS = [
     "team_goals_against_rate",
     "opp_goals_for_rate",
     "opp_goals_against_rate",
+    # forward-looking fixture run over the next FIXTURE_HORIZON gameweeks.
+    # Not leakage: the fixture *schedule* is published at season start, so
+    # "who do we play next" is genuinely known in advance. The opponents'
+    # strength is measured as of the CURRENT round (the same already-shifted
+    # rolling rates), never using results from the future rounds themselves.
+    "future_opp_goals_for_rate",
+    "future_opp_goals_against_rate",
+    "future_fixtures_count",
 ]
 TEST_SEASON = "2025-26"
+FIXTURE_HORIZON = 5
 
 
 def load_historical_df() -> pd.DataFrame:
@@ -122,7 +131,64 @@ def build_features(df: pd.DataFrame) -> pd.DataFrame:
     df["rolling_points_3"] = df["rolling_points_3"].fillna(pos_avg_points)
     df["rolling_minutes_3"] = df["rolling_minutes_3"].fillna(pos_avg_minutes)
 
+    df = _add_future_fixture_features(df, team_rates, league_avg_for, league_avg_against)
+
     df["price"] = df["value"] / 10.0
+    return df
+
+
+def _add_future_fixture_features(
+    df: pd.DataFrame,
+    team_rates: pd.DataFrame,
+    league_avg_for: float,
+    league_avg_against: float,
+    horizon: int = FIXTURE_HORIZON,
+) -> pd.DataFrame:
+    """How hard is each team's run over the NEXT `horizon` gameweeks?
+
+    Uses the fixture schedule (known in advance in real life, so not leakage)
+    joined to each future opponent's strength *as measured at the current
+    round* -- deliberately not their strength at that future round, which
+    would smuggle in results that hadn't happened yet.
+    """
+    schedule = df[["season", "team", "round", "opponent_team"]].drop_duplicates()
+
+    # every (season, team, round) paired with the opponents it faces in the
+    # `horizon` rounds that follow
+    future = []
+    for offset in range(1, horizon + 1):
+        shifted = schedule.copy()
+        shifted["from_round"] = shifted["round"] - offset
+        future.append(shifted[["season", "team", "from_round", "opponent_team"]])
+    future_df = pd.concat(future, ignore_index=True)
+    future_df = future_df[future_df["from_round"] >= 1]
+
+    # opponent strength as of from_round (the round we're predicting), not the fixture's round
+    opp_now = team_rates.rename(
+        columns={
+            "team": "opponent_team",
+            "round": "from_round",
+            "team_goals_for_rate": "f_opp_for",
+            "team_goals_against_rate": "f_opp_against",
+        }
+    )
+    future_df = future_df.merge(opp_now, on=["season", "opponent_team", "from_round"], how="left")
+    future_df["f_opp_for"] = future_df["f_opp_for"].fillna(league_avg_for)
+    future_df["f_opp_against"] = future_df["f_opp_against"].fillna(league_avg_against)
+
+    agg = future_df.groupby(["season", "team", "from_round"], as_index=False).agg(
+        future_opp_goals_for_rate=("f_opp_for", "mean"),
+        future_opp_goals_against_rate=("f_opp_against", "mean"),
+        future_fixtures_count=("opponent_team", "count"),
+    )
+    agg = agg.rename(columns={"from_round": "round"})
+
+    df = df.merge(agg, on=["season", "team", "round"], how="left")
+    # end-of-season rounds have no (or a partial) future window -- neutral
+    # strength, and a real count of how many fixtures actually remain
+    df["future_opp_goals_for_rate"] = df["future_opp_goals_for_rate"].fillna(league_avg_for)
+    df["future_opp_goals_against_rate"] = df["future_opp_goals_against_rate"].fillna(league_avg_against)
+    df["future_fixtures_count"] = df["future_fixtures_count"].fillna(0)
     return df
 
 
@@ -285,6 +351,12 @@ def build_live_feature_rows(pos_avg_points: dict, pos_avg_minutes: dict) -> tupl
         ).fetchall()
         teams = {row[0]: row[1] for row in conn.execute("SELECT id, name FROM teams")}
 
+        # the same forward-looking window the model was trained on
+        future_fixtures = conn.execute(
+            "SELECT team_h, team_a FROM fixtures WHERE event >= ? AND event < ? AND finished = 0",
+            (gw_id, gw_id + FIXTURE_HORIZON),
+        ).fetchall()
+
         players = conn.execute(
             """
             SELECT id, web_name, team_id, element_type, now_cost, points_per_game,
@@ -300,6 +372,12 @@ def build_live_feature_rows(pos_avg_points: dict, pos_avg_minutes: dict) -> tupl
     for team_h, team_a in fixtures:
         fixture_map[team_h] = (team_a, 1)
         fixture_map[team_a] = (team_h, 0)
+
+    # team_id -> list of opponent team_ids over the next FIXTURE_HORIZON gameweeks
+    future_opponents: dict[int, list[int]] = {}
+    for team_h, team_a in future_fixtures:
+        future_opponents.setdefault(team_h, []).append(team_a)
+        future_opponents.setdefault(team_a, []).append(team_h)
 
     rows = []
     meta = []
@@ -323,6 +401,16 @@ def build_live_feature_rows(pos_avg_points: dict, pos_avg_minutes: dict) -> tupl
         # starter as barely playing once games have actually been played this season
         rolling_minutes_3 = (minutes / starts) if starts else pos_avg_minutes.get(position, 45.0)
 
+        upcoming = future_opponents.get(team_id, [])
+        if upcoming:
+            upcoming_rates = [
+                team_rates.get(teams.get(opp), (league_avg_for, league_avg_against)) for opp in upcoming
+            ]
+            future_opp_for = sum(r[0] for r in upcoming_rates) / len(upcoming_rates)
+            future_opp_against = sum(r[1] for r in upcoming_rates) / len(upcoming_rates)
+        else:
+            future_opp_for, future_opp_against = league_avg_for, league_avg_against
+
         rows.append(
             {
                 "position": position,
@@ -334,6 +422,9 @@ def build_live_feature_rows(pos_avg_points: dict, pos_avg_minutes: dict) -> tupl
                 "team_goals_against_rate": team_against,
                 "opp_goals_for_rate": opp_for,
                 "opp_goals_against_rate": opp_against,
+                "future_opp_goals_for_rate": future_opp_for,
+                "future_opp_goals_against_rate": future_opp_against,
+                "future_fixtures_count": len(upcoming),
             }
         )
         meta.append((pid, web_name, team_id, element_type, now_cost, status, chance_of_playing_next_round))
